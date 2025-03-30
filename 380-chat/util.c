@@ -5,8 +5,20 @@
 #include <stdio.h>
 #include <assert.h>
 #include <inttypes.h>
-#include <endian.h>
+// #include <endian.h>
+#include <machine/endian.h> // for mac
 #include <string.h>
+#include <stdint.h>
+#include <gmp.h>
+#include "util.h"
+
+#ifdef __APPLE__
+#include <libkern/OSByteOrder.h>
+#define htole32(x) OSSwapHostToLittleInt32(x)
+#define le32toh(x) OSSwapLittleToHostInt32(x)
+#else
+#include <endian.h>
+#endif
 
 /* when reading long integers, never read more than this many bytes: */
 #define MPZ_MAX_LEN 1024

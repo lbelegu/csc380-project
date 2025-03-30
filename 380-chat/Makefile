@@ -9,10 +9,10 @@ CXXFLAGS := $(CXXFLAGS) $(COMMON)
 CC       := gcc
 CXX      := g++
 LD       := $(CC)
-LDFLAGS  := $(LDFLAGS) # -L/path/to/libs/
-LDADD    := -lpthread -lcrypto -lgmp $(shell pkg-config --libs gtk+-3.0)
-INCLUDE  := $(shell pkg-config --cflags gtk+-3.0)
-DEFS     := # -DLINUX
+LDFLAGS  := $(LDFLAGS) -L/opt/homebrew/opt/openssl/lib -L/opt/homebrew/opt/gmp/lib
+LDADD    := -lpthread -lcrypto -lgmp -lgmpxx $(shell pkg-config --libs gtk+-3.0)
+INCLUDE  := $(shell pkg-config --cflags gtk+-3.0) -I/opt/homebrew/opt/openssl/include -I/opt/homebrew/opt/gmp/include
+DEFS     := -D_DARWIN_C_SOURCE -D_GNU_SOURCE
 
 TARGETS  := chat dh-example
 
