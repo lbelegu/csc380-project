@@ -10,6 +10,7 @@
 #include "dh.h"
 #include "keys.h"
 #include <limits.h>
+#include "util.h"
 
 #ifndef HOST_NAME_MAX
 #define HOST_NAME_MAX 255
@@ -18,6 +19,11 @@
 #ifndef PATH_MAX
 #define PATH_MAX 1024
 #endif
+
+// global variables 
+static dhKey myKey;        			 /* DH key pair */
+static mpz_t sharedSecret; 			 /* computed shared secret */
+static unsigned char sessionKey[32]; /* derived session key */
 
 static GtkTextBuffer* tbuf; /* transcript buffer */
 static GtkTextBuffer* mbuf; /* message buffer */
@@ -181,10 +187,90 @@ static gboolean shownewmessage(gpointer msg)
 	return 0;
 }
 
+// DH key exchange function
+static int performDH() {
+    //printf("Generating new DH keypair...\n");
+	// initializing the key
+    initKey(&myKey);
+
+	// generating the key pair
+    dhGenk(&myKey);
+
+	// printf("My public key: \n");
+    // gmp_printf("%Zd\n", myKey.PK);
+    
+    // convert public key to bytes for sending
+    size_t pkBytes;
+    unsigned char* pkBuf = Z2BYTES(NULL, &pkBytes, myKey.PK);
+    
+    if (isclient) {
+        // client sends first
+		// printf("Client sending public key...\n");
+        send(sockfd, &pkBytes, sizeof(size_t), 0);
+        send(sockfd, pkBuf, pkBytes, 0);
+        
+        // receive server's public key
+		// printf("Waiting for server's public key...\n");
+        size_t serverPkBytes;
+        recv(sockfd, &serverPkBytes, sizeof(size_t), 0);
+        unsigned char* serverPk = malloc(serverPkBytes);
+        recv(sockfd, serverPk, serverPkBytes, 0);
+        
+        // convert received bytes to mpz_t
+        mpz_t serverPubKey;
+        mpz_init(serverPubKey);
+        BYTES2Z(serverPubKey, serverPk, serverPkBytes);
+		// printf("Received server's public key: ");
+		// gmp_printf("%Zd\n", serverPubKey);
+        
+        // compute shared secret 
+		// printf("Computing shared secret...\n");
+        dhFinal(myKey.SK, myKey.PK, serverPubKey, sessionKey, 32);
+        
+        mpz_clear(serverPubKey);
+        free(serverPk);
+    } else {
+        // server receives first
+		// printf("Server waiting for client's public key...\n");
+        size_t clientPkBytes;
+        recv(sockfd, &clientPkBytes, sizeof(size_t), 0);
+        unsigned char* clientPk = malloc(clientPkBytes);
+        recv(sockfd, clientPk, clientPkBytes, 0);
+        
+        // send the public key
+		// printf("Server sending public key...\n");
+        send(sockfd, &pkBytes, sizeof(size_t), 0);
+        send(sockfd, pkBuf, pkBytes, 0);
+        
+        // convert received bytes to mpz_t
+        mpz_t clientPubKey;
+        mpz_init(clientPubKey);
+        BYTES2Z(clientPubKey, clientPk, clientPkBytes);
+		// printf("Received client's public key: ");
+		// gmp_printf("%Zd\n", clientPubKey);
+        
+        // compute shared secret 
+		// printf("Computing shared secret...\n");
+        dhFinal(myKey.SK, myKey.PK, clientPubKey, sessionKey, 32);
+        
+        mpz_clear(clientPubKey);
+        free(clientPk);
+    }
+    
+    free(pkBuf);
+	// printf("Final session key: ");
+    // for (int i = 0; i < 32; i++) {
+    //     printf("%02x", sessionKey[i]);
+    // }
+    // printf("\n");
+    return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	if (init("params") != 0) {
-		fprintf(stderr, "could not read DH params from file 'params'\n");
+		//fprintf(stderr, "could not read DH params from file 'params'\n");
+		fprintf(stderr, "could not initialize DH params\n");
 		return 1;
 	}
 	// define long options
@@ -231,6 +317,19 @@ int main(int argc, char *argv[])
 	} else {
 		initServerNet(port);
 	}
+
+	// call DH key exchange function
+	if (performDH() != 0) {
+        fprintf(stderr, "Failed to perform DH key exchange\n");
+        return 1;
+    }
+
+	// print session key 
+    // printf("Session key: ");
+    // for (int i = 0; i < 32; i++) {
+    //     printf("%02x", sessionKey[i]);
+    // }
+    // printf("\n");
 
 	/* setup GTK... */
 	GtkBuilder* builder;
