@@ -1,4 +1,7 @@
-/* Diffie Hellman key exchange, and HKDF for key derivation. */
+#include <sys/types.h>
+#include <libkern/OSByteOrder.h>
+#define htobe64(x) OSSwapHostToBigInt64(x)
+
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include <openssl/sha.h>
@@ -8,7 +11,6 @@
 #include <gmp.h>
 #include "dh.h"
 #include <string.h>
-#include <endian.h>
 #include <assert.h>
 #include "util.h"
 
