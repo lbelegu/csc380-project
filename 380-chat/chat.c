@@ -283,6 +283,9 @@ static int performDH() {
     // step 1: initialize and generate diffie-hellman key pair
     initKey(&myKey);            // initialize key (allocates memory)
     dhGenk(&myKey);             // generate private (sk) and public (pk) keys
+	// printf("my public key:\n");
+	// gmp_printf("%Zd\n", myKey.PK);
+
 
     // step 2: convert our public key to bytes for sending
     size_t pkBytes;
@@ -305,13 +308,16 @@ static int performDH() {
         mpz_t serverPubKey;
         mpz_init(serverPubKey);
         BYTES2Z(serverPubKey, serverPk, serverPkBytes);
+		// printf("received server's public key:\n");
+		// gmp_printf("%Zd\n", serverPubKey);
+
+
 
         // compute shared session key using our sk and their pk
         dhFinal(myKey.SK, myKey.PK, serverPubKey, sessionKey, 32);
 
 		// tamper with the derived session key to simulate authentication failure
 		// sessionKey[0] ^= 0xff;
-
 
         // cleanup
         mpz_clear(serverPubKey);
@@ -333,6 +339,8 @@ static int performDH() {
         mpz_t clientPubKey;
         mpz_init(clientPubKey);
         BYTES2Z(clientPubKey, clientPk, clientPkBytes);
+		// printf("received client's public key:\n");
+		// gmp_printf("%Zd\n", clientPubKey);
 
         // compute shared session key
         dhFinal(myKey.SK, myKey.PK, clientPubKey, sessionKey, 32);
@@ -344,6 +352,13 @@ static int performDH() {
 
     // free our public key buffer
     free(pkBuf);
+
+	// printf("final session key: ");
+	// for (int i = 0; i < 32; i++) {
+	//     printf("%02x", sessionKey[i]);
+	// }
+	// printf("\n");
+
 
     // now both sides share the same sessionkey (used for encryption & integrity)
     return 0;
