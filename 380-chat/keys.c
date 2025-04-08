@@ -7,6 +7,7 @@
 #include "keys.h"
 #include "util.h"
 #include <openssl/sha.h>
+#include <openssl/hmac.h>	/*added for HMAC support*/
 
 int initKey(dhKey* k)
 {
@@ -116,3 +117,21 @@ char* hashPK(dhKey* k, char* hash)
 	}
 	return hash;
 }
+
+/* Added for HMAC Signature Support */
+
+int signData(unsigned char* out, const unsigned char* in, size_t inlen, const unsigned char* key, size_t keylen)
+{
+	unsigned int hlen = 32;
+	HMAC(EVP_sha256(), key, keylen, in, inlen, out, &hlen);
+	return hlen;
+}
+
+int verifySignature(const unsigned char* sig, const unsigned char* in, size_t inlen, const unsigned char* key, size_t keylen)
+{
+	unsigned char calcSig[32];
+	unsigned int hlen = 32;
+	HMAC(EVP_sha256(), key, keylen, in, inlen, calcSig, &hlen);
+	return (memcmp(sig, calcSig, 32) == 0);
+}
+

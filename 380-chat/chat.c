@@ -32,6 +32,8 @@ static GtkTextMark*   mark; /* used for scrolling to end of transcript, etc */
 
 static pthread_t trecv;     /* wait for incoming messagess and post to queue */
 void* recvMsg(void*);       /* for trecv */
+static int performDH();     /* declare DH function */
+
 
 #define max(a, b)         \
 	({ typeof(a) _a = a;    \
@@ -162,12 +164,40 @@ static void sendMessage(GtkWidget* w /* <-- msg entry widget */, gpointer /* dat
 	gtk_text_buffer_get_start_iter(mbuf,&mstart);
 	gtk_text_buffer_get_end_iter(mbuf,&mend);
 	char* message = gtk_text_buffer_get_text(mbuf,&mstart,&mend,1);
-	size_t len = g_utf8_strlen(message,-1);
-	/* XXX we should probably do the actual network stuff in a different
-	 * thread and have it call this once the message is actually sent. */
-	ssize_t nbytes;
-	if ((nbytes = send(sockfd,message,len,0)) == -1)
-		error("send failed");
+	size_t len = strlen(message);
+
+	/* begin encryption */
+	unsigned char ciphertext[512];
+	int outlen1, outlen2;
+
+	EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+	EVP_EncryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, sessionKey, sessionKey);
+	EVP_EncryptUpdate(ctx, ciphertext, &outlen1, (unsigned char*)message, len);
+	EVP_EncryptFinal_ex(ctx, ciphertext + outlen1, &outlen2);
+	int ciphertext_len = outlen1 + outlen2;
+	EVP_CIPHER_CTX_free(ctx);
+
+	// debug: print ciphertext in hex to verify it's encrypted
+	/*
+	fprintf(stderr, "ciphertext: ");
+	for (int i = 0; i < ciphertext_len; i++) {
+		fprintf(stderr, "%02x", ciphertext[i]);
+	}
+	fprintf(stderr, "\n");
+	*/
+
+	/* add hmac for integrity */
+	unsigned char hmac[EVP_MAX_MD_SIZE];
+	unsigned int hmac_len;
+	HMAC(EVP_sha256(), sessionKey, 32, ciphertext, ciphertext_len, hmac, &hmac_len);
+
+	// send total: hmac || ciphertext
+	send(sockfd, &hmac_len, sizeof(hmac_len), 0);
+	send(sockfd, hmac, hmac_len, 0);
+	send(sockfd, &ciphertext_len, sizeof(ciphertext_len), 0);
+	send(sockfd, ciphertext, ciphertext_len, 0);
+
+	/* end encryption & hmac */
 
 	tsappend(message,NULL,1);
 	free(message);
@@ -175,6 +205,7 @@ static void sendMessage(GtkWidget* w /* <-- msg entry widget */, gpointer /* dat
 	gtk_text_buffer_delete(mbuf,&mstart,&mend);
 	gtk_widget_grab_focus(w);
 }
+
 
 static gboolean shownewmessage(gpointer msg)
 {
@@ -187,86 +218,156 @@ static gboolean shownewmessage(gpointer msg)
 	return 0;
 }
 
-// DH key exchange function
+// [ performDH remains unchanged ]
+
+// [ main remains unchanged ]
+
+/* thread function to listen for new messages and post them to the gtk
+ * main loop for processing: */
+void* recvMsg(void*)
+{
+	size_t maxlen = 512;
+	unsigned char msg[maxlen+2];
+	ssize_t nbytes;
+	while (1) {
+		// Rreceive HMAC and encrypted Data
+		unsigned int hmac_len;
+		recv(sockfd, &hmac_len, sizeof(hmac_len), 0);
+		unsigned char hmac_recv[EVP_MAX_MD_SIZE];
+		recv(sockfd, hmac_recv, hmac_len, 0);
+		int ciphertext_len;
+		recv(sockfd, &ciphertext_len, sizeof(ciphertext_len), 0);
+		recv(sockfd, msg, ciphertext_len, 0);
+
+
+		// msg[0] ^= 0xff; // flipped a bit to test integrity check
+
+
+		// verify HMAC 
+		unsigned char hmac_calc[EVP_MAX_MD_SIZE];
+		unsigned int hmac_calc_len;
+		HMAC(EVP_sha256(), sessionKey, 32, msg, ciphertext_len, hmac_calc, &hmac_calc_len);
+		if (hmac_len != hmac_calc_len || memcmp(hmac_recv, hmac_calc, hmac_len) != 0) {
+			fprintf(stderr, "Message integrity check failed!\n");
+		
+			// Show warning in chat UI if message fails integrity check
+			char* tags[2] = {"status", NULL};
+			tsappend("Message failed integrity check and was dropped.\n", tags, 1);
+		
+			continue;
+		}
+		
+
+		// Decrypt 
+		unsigned char plaintext[512];
+		int outlen1, outlen2;
+		EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+		EVP_DecryptInit_ex(ctx, EVP_aes_256_cbc(), NULL, sessionKey, sessionKey);
+		EVP_DecryptUpdate(ctx, plaintext, &outlen1, msg, ciphertext_len);
+		EVP_DecryptFinal_ex(ctx, plaintext + outlen1, &outlen2);
+		int plaintext_len = outlen1 + outlen2;
+		EVP_CIPHER_CTX_free(ctx);
+
+		char* m = malloc(plaintext_len + 1);
+		memcpy(m, plaintext, plaintext_len);
+		m[plaintext_len] = '\0';
+		g_main_context_invoke(NULL,shownewmessage,(gpointer)m);
+	}
+	return 0;
+}
+
+
+
+// dh key exchange function (securely shares a session key between client and server)
 static int performDH() {
-    //printf("Generating new DH keypair...\n");
-	// initializing the key
-    initKey(&myKey);
+    // step 1: initialize and generate diffie-hellman key pair
+    initKey(&myKey);            // initialize key (allocates memory)
+    dhGenk(&myKey);             // generate private (sk) and public (pk) keys
+	// printf("my public key:\n");
+	// gmp_printf("%Zd\n", myKey.PK);
 
-	// generating the key pair
-    dhGenk(&myKey);
 
-	// printf("My public key: \n");
-    // gmp_printf("%Zd\n", myKey.PK);
-    
-    // convert public key to bytes for sending
+    // step 2: convert our public key to bytes for sending
     size_t pkBytes;
-    unsigned char* pkBuf = Z2BYTES(NULL, &pkBytes, myKey.PK);
-    
+    unsigned char* pkBuf = Z2BYTES(NULL, &pkBytes, myKey.PK);  // serialize public key
+
     if (isclient) {
-        // client sends first
-		// printf("Client sending public key...\n");
+        // client side: send our public key, then receive server's public key
+
+        // send public key size and data
         send(sockfd, &pkBytes, sizeof(size_t), 0);
         send(sockfd, pkBuf, pkBytes, 0);
-        
+
         // receive server's public key
-		// printf("Waiting for server's public key...\n");
         size_t serverPkBytes;
         recv(sockfd, &serverPkBytes, sizeof(size_t), 0);
         unsigned char* serverPk = malloc(serverPkBytes);
         recv(sockfd, serverPk, serverPkBytes, 0);
-        
-        // convert received bytes to mpz_t
+
+        // convert received bytes to mpz_t format (for gmp math)
         mpz_t serverPubKey;
         mpz_init(serverPubKey);
         BYTES2Z(serverPubKey, serverPk, serverPkBytes);
-		// printf("Received server's public key: ");
+		// printf("received server's public key:\n");
 		// gmp_printf("%Zd\n", serverPubKey);
-        
-        // compute shared secret 
-		// printf("Computing shared secret...\n");
+
+
+
+        // compute shared session key using our sk and their pk
         dhFinal(myKey.SK, myKey.PK, serverPubKey, sessionKey, 32);
-        
+
+		// tamper with the derived session key to simulate authentication failure
+		// sessionKey[0] ^= 0xff;
+
+        // cleanup
         mpz_clear(serverPubKey);
         free(serverPk);
     } else {
-        // server receives first
-		// printf("Server waiting for client's public key...\n");
+        // server side: receive client's public key, then send our public key
+
+        // receive client's public key
         size_t clientPkBytes;
         recv(sockfd, &clientPkBytes, sizeof(size_t), 0);
         unsigned char* clientPk = malloc(clientPkBytes);
         recv(sockfd, clientPk, clientPkBytes, 0);
-        
-        // send the public key
-		// printf("Server sending public key...\n");
+
+        // send our public key in response
         send(sockfd, &pkBytes, sizeof(size_t), 0);
         send(sockfd, pkBuf, pkBytes, 0);
-        
-        // convert received bytes to mpz_t
+
+        // convert received bytes to mpz_t format
         mpz_t clientPubKey;
         mpz_init(clientPubKey);
         BYTES2Z(clientPubKey, clientPk, clientPkBytes);
-		// printf("Received client's public key: ");
+		// printf("received client's public key:\n");
 		// gmp_printf("%Zd\n", clientPubKey);
-        
-        // compute shared secret 
-		// printf("Computing shared secret...\n");
+
+        // compute shared session key
         dhFinal(myKey.SK, myKey.PK, clientPubKey, sessionKey, 32);
-        
+
+        // cleanup
         mpz_clear(clientPubKey);
         free(clientPk);
     }
-    
+
+    // free our public key buffer
     free(pkBuf);
-	// printf("Final session key: ");
-    // for (int i = 0; i < 32; i++) {
-    //     printf("%02x", sessionKey[i]);
-    // }
-    // printf("\n");
+
+	// printf("final session key: ");
+	// for (int i = 0; i < 32; i++) {
+	//     printf("%02x", sessionKey[i]);
+	// }
+	// printf("\n");
+
+
+    // now both sides share the same sessionkey (used for encryption & integrity)
     return 0;
 }
 
-int main(int argc, char *argv[])
+
+
+
+	int main(int argc, char *argv[])
 {
 	if (init("params") != 0) {
 		//fprintf(stderr, "could not read DH params from file 'params'\n");
@@ -376,29 +477,5 @@ int main(int argc, char *argv[])
 
 	shutdownNetwork();
 	return 0;
-}
 
-/* thread function to listen for new messages and post them to the gtk
- * main loop for processing: */
-void* recvMsg(void*)
-{
-	size_t maxlen = 512;
-	char msg[maxlen+2]; /* might add \n and \0 */
-	ssize_t nbytes;
-	while (1) {
-		if ((nbytes = recv(sockfd,msg,maxlen,0)) == -1)
-			error("recv failed");
-		if (nbytes == 0) {
-			/* XXX maybe show in a status message that the other
-			 * side has disconnected. */
-			return 0;
-		}
-		char* m = malloc(maxlen+2);
-		memcpy(m,msg,nbytes);
-		if (m[nbytes-1] != '\n')
-			m[nbytes++] = '\n';
-		m[nbytes] = 0;
-		g_main_context_invoke(NULL,shownewmessage,(gpointer)m);
-	}
-	return 0;
 }
