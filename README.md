@@ -2,7 +2,7 @@
 
 This project was done by: <br>
 Leon Belegu <br>
-Lina Projj  <br>
+Lina Prroj  <br>
 Jolie Huang <br>
 Yared Pena
 
