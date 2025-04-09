@@ -16,7 +16,7 @@ The Scope of this project was to develop a C progrma which provides: <br>
 
 ## GOAL:
 The Goal of this project was to: <br>
-> Gain familiarity using cryptographic libraries (openssl)
-> Experience in protocol design
-> Understanding various issues in network programming
+> Gain familiarity using cryptographic libraries (openssl) <br>
+> Experience in protocol design <br>
+> Understanding various issues in network programming <br>
 > How to avoid common software security issues
