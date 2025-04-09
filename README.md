@@ -6,6 +6,8 @@ Lina Projj  <br>
 Jolie Huang <br>
 Yared Pena
 
+>During the project we separated the assignment amongst ourselves to do privately and shared the completed work to two people (Leon and Lina) to commit onto the repository, we also did Pull Requests to verify the combined work.
+
 ## SCOPE:
 The Scope of this project was to develop a C progrma which provides: <br>
 > Authentification of correspondents <br>
